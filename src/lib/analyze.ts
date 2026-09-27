@@ -102,9 +102,15 @@ export function analyzeWord(word: string, dict: Dictionary, trie: PatternTrie): 
       const rightChars = L - bp;
 
       if (exception) {
-        allowed = exceptionBreaks.has(bp);
-        fromException = allowed;
-        if (allowed) {
+        const marked = exceptionBreaks.has(bp);
+        if (marked && leftChars < dict.leftMin) {
+          // 例外断点覆盖模式分值，但不能越过左/右最少保留字母数
+          reason = `例外词 "${exception.source}" 在此标注了断点（模式分值为 ${raw.score}），但左侧仅 ${leftChars} 个字母，少于左最少保留 ${dict.leftMin} 个，断点不生效，不可断`;
+        } else if (marked && rightChars < dict.rightMin) {
+          reason = `例外词 "${exception.source}" 在此标注了断点（模式分值为 ${raw.score}），但右侧仅 ${rightChars} 个字母，少于右最少保留 ${dict.rightMin} 个，断点不生效，不可断`;
+        } else if (marked) {
+          allowed = true;
+          fromException = true;
           reason = `例外词 "${exception.source}" 的显式断点，覆盖模式结果（模式分值为 ${raw.score}），可断`;
         } else {
           const patternWouldAllow = raw.score % 2 === 1 && leftChars >= dict.leftMin && rightChars >= dict.rightMin;

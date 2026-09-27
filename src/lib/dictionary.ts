@@ -33,12 +33,16 @@ export function parsePattern(text: string): Pattern {
   }
 
   const digits = new Array<number>(stripped.length + 1).fill(0);
+  // 间隙是否已被数字占用：不能用 digits[gapIndex] !== 0 判断，
+  // 否则先写入的 0 会被当成「未占用」，放过 a01b / a00b 这类重复标注
+  const occupied = new Array<boolean>(stripped.length + 1).fill(false);
   let gapIndex = 0;
   for (const ch of text) {
     if (ch >= '0' && ch <= '9') {
-      if (digits[gapIndex] !== 0) {
+      if (occupied[gapIndex]) {
         throw new Error(`模式 "${text}" 非法：同一个字母间隙出现了多个数字`);
       }
+      occupied[gapIndex] = true;
       digits[gapIndex] = Number(ch);
     } else {
       gapIndex += 1;

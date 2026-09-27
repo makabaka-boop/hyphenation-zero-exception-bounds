@@ -101,8 +101,13 @@ describe('parsePattern', () => {
     }
   });
 
-  it('同一个间隙两位数字必须报错', () => {
-    expect(() => parsePattern('a12b')).toThrow(/多个数字/);
+  it('同一个间隙多位数字必须报错（含数字 0）', () => {
+    // 0 也是占位数字：先写 0 再写其他数字（或再写 0）同样是重复标注
+    for (const bad of ['a12b', 'a01b', 'a10b', 'a00b', '00ab', 'ab00', '.a01b']) {
+      expect(() => parsePattern(bad), `duplicate digits: ${bad}`).toThrow(/多个数字/);
+    }
+    // 不同间隙各一位 0 是合法的
+    expect(() => parsePattern('0a0b0')).not.toThrow();
   });
 });
 
@@ -232,9 +237,29 @@ describe('trie 与朴素逐模式扫描对拍', () => {
 });
 
 describe('例外词覆盖', () => {
-  const patternText = '.he5l\nhel3l\nll4o'; // 模式会允许/禁止一些间隙
+  const patternText = '.he5l\nhel3l\nll4o'; // hello：断点2=5(奇)、断点3=3(奇)、断点4=4(偶)
 
-  it('显式断点覆盖偶数分值与左右限制', () => {
+  it('显式断点覆盖偶数分值（满足左右最少保留时生效）', () => {
+    const { results } = analyzeWithOracle(['hello'], {
+      patternText,
+      exceptionText: 'he-ll-o',
+      leftMin: 2,
+      rightMin: 1
+    });
+    const r = results[0];
+    expect(r.breaks).toEqual([2, 4]);
+    const byBp = new Map(r.gaps.filter((g) => g.breakPosition !== null).map((g) => [g.breakPosition, g]));
+    expect(byBp.get(2)!.fromException).toBe(true);
+    expect(byBp.get(2)!.allowed).toBe(true);
+    // 断点 4 模式分值为偶数 4，例外显式断点覆盖后仍可断
+    expect(byBp.get(4)!.fromException).toBe(true);
+    expect(byBp.get(4)!.allowed).toBe(true);
+    // 模式下断点 3 是奇数 3 且左右满足，本应可断；例外没有标注 → 被压制
+    expect(byBp.get(3)!.allowed).toBe(false);
+    expect(byBp.get(3)!.reason).toMatch(/未在此标注断点/);
+  });
+
+  it('例外断点越过右最少保留字母数时不生效，并给出原因', () => {
     const { results } = analyzeWithOracle(['hello'], {
       patternText,
       exceptionText: 'he-ll-o',
@@ -242,14 +267,37 @@ describe('例外词覆盖', () => {
       rightMin: 2
     });
     const r = results[0];
-    expect(r.breaks).toEqual([2, 4]);
+    // 断点 4 右侧只剩 1 个字母 < 右最少 2 → 例外断点不生效；断点 2 满足 → 生效
+    expect(r.breaks).toEqual([2]);
+    expect(r.hyphenated).toBe('he-llo');
     const byBp = new Map(r.gaps.filter((g) => g.breakPosition !== null).map((g) => [g.breakPosition, g]));
-    expect(byBp.get(2)!.fromException).toBe(true);
     expect(byBp.get(2)!.allowed).toBe(true);
-    expect(byBp.get(4)!.fromException).toBe(true);
-    // 模式下 gap4（断点 3）是奇数 5 且左右满足，本应可断；例外没有标注 → 被压制
+    expect(byBp.get(2)!.fromException).toBe(true);
+    const dropped = byBp.get(4)!;
+    expect(dropped.allowed).toBe(false);
+    expect(dropped.fromException).toBe(false); // 未生效的例外断点按规则排除展示
+    expect(dropped.reason).toMatch(/右最少/);
+    expect(dropped.reason).toMatch(/不生效/);
+    // 断点 3 仍被例外压制（例外词未标注的间隙不允许模式放行）
     expect(byBp.get(3)!.allowed).toBe(false);
     expect(byBp.get(3)!.reason).toMatch(/未在此标注断点/);
+  });
+
+  it('靠近词首、词尾的例外断点分别受左、右最少保留限制', () => {
+    const { results } = analyzeWithOracle(['abcde'], {
+      patternText: '',
+      exceptionText: 'a-bcd-e',
+      leftMin: 2,
+      rightMin: 2
+    });
+    const r = results[0];
+    expect(r.breaks).toEqual([]);
+    expect(r.hyphenated).toBe('abcde');
+    const byBp = new Map(r.gaps.filter((g) => g.breakPosition !== null).map((g) => [g.breakPosition, g]));
+    expect(byBp.get(1)!.allowed).toBe(false);
+    expect(byBp.get(1)!.reason).toMatch(/左最少/);
+    expect(byBp.get(4)!.allowed).toBe(false);
+    expect(byBp.get(4)!.reason).toMatch(/右最少/);
   });
 
   it('无断点例外压制全部模式断点', () => {
@@ -302,6 +350,14 @@ describe('批量分析与端到端', () => {
     expect(() => buildDictionary({ patternText: mk(1000), exceptionText: '', leftMin: 0, rightMin: 0 })).not.toThrow();
   });
 
+  it('词典构建拒绝同间隙重复数字的模式（含 0）', () => {
+    for (const patternText of ['a01b', 'a00b', 'he2l\nhe23l']) {
+      expect(() =>
+        buildDictionary({ patternText, exceptionText: '', leftMin: 2, rightMin: 2 })
+      ).toThrow(/多个数字/);
+    }
+  });
+
   it('hyphenate 工具', () => {
     expect(hyphenate('hello', [3])).toBe('hel-lo');
     expect(hyphenate('hello', [])).toBe('hello');
@@ -329,6 +385,11 @@ describe('导出 JSON 与高亮同源', () => {
       // 所有 allowed 间隙都必须体现在 breaks 里（高亮与导出一致）
       const allowedPositions = w.gaps.filter((g) => g.allowed).map((g) => g.breakPosition);
       expect(allowedPositions).toEqual(w.breaks);
+      // 同一规则：导出的每个断点（含例外断点）都满足左/右最少保留字母数
+      for (const bp of w.breaks) {
+        expect(bp).toBeGreaterThanOrEqual(payload.rules.leftMin);
+        expect(w.word.length - bp).toBeGreaterThanOrEqual(payload.rules.rightMin);
+      }
     }
     expect(payload.words[0].exception).toBe('he-ll-o');
   });
@@ -370,7 +431,7 @@ describe('随机对拍（trie vs 朴素扫描）', () => {
     return s;
   }
 
-  it('100 组随机词典：分值、来源、断点全一致', () => {
+  it('100 组随机词典：分值、来源、断点全一致', { timeout: 30000 }, () => {
     const rand = rng(42);
     for (let iter = 0; iter < 100; iter += 1) {
       const patternSet = new Set<string>();

@@ -59,7 +59,11 @@ export interface GapResult {
   contributors: string[];
   /** 该间隙是否最终可断（已应用左右最少保留字母数与例外覆盖） */
   allowed: boolean;
-  /** 是否为例外词的显式断点 */
+  /**
+   * 是否为例外词「生效」的显式断点（蕴含 allowed）。
+   * 例外标注了但被左/右最少保留字母数挡下的断点不算，allowed 为 false，
+   * 其间隙按规则排除展示，原因中会说明例外断点未生效。
+   */
   fromException: boolean;
   /** 被排除/放行的原因，供编辑者逐间隙核对 */
   reason: string;
