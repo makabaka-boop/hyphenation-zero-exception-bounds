@@ -58,13 +58,14 @@ export class PatternTrie {
     const contribute = (pattern: Pattern, start: number): void => {
       for (let d = 0; d < pattern.digits.length; d += 1) {
         const value = pattern.digits[d];
-        if (value === 0) continue; // 无数字（等价于 0）不参与竞争
+        if (value === null) continue; // 该间隙没有写数字，不参与竞争
         const gi = start + d;
         const target = gaps[gi];
         if (value > target.score) {
           target.score = value;
           target.contributors = [pattern.source];
         } else if (value === target.score) {
+          // 0 === 0 时同样登记来源：显式 0 也是一种命中，需要在解释中可见
           target.contributors.push(pattern.source);
         }
       }

@@ -90,14 +90,15 @@ function recompute(): void {
 
 function chipClass(g: GapResult): string {
   if (g.breakPosition === null) return 'boundary';
-  if (g.fromException) return 'exception';
+  if (g.fromException && g.allowed) return 'exception';
   if (g.allowed) return 'allowed';
   return 'denied';
 }
 
 function verdictPill(g: GapResult): { cls: string; text: string } {
   if (g.breakPosition === null) return { cls: 'bd', text: '边界' };
-  if (g.fromException) return { cls: 'ex', text: '例外断点' };
+  if (g.fromException && g.allowed) return { cls: 'ex', text: '例外断点' };
+  if (g.fromException) return { cls: 'no', text: '例外受左右限制' };
   if (g.allowed) return { cls: 'ok', text: '可断' };
   return { cls: 'no', text: '排除' };
 }
@@ -158,7 +159,7 @@ function renderGapTable(card: HTMLElement, result: WordResult): void {
     const rowKind =
       g.breakPosition === null
         ? 'row-boundary'
-        : g.fromException
+        : g.fromException && g.allowed
           ? 'row-exception'
           : g.allowed
             ? 'row-allowed'

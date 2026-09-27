@@ -11,32 +11,36 @@ const isLowerAscii = (c: string): boolean => c >= 'a' && c <= 'z';
 
 /**
  * 解析一条 Knuth-Liang 模式。
- * 语法：小写 ASCII 字母连续排列，整体（含数字）首尾可各带至多一个 '.'；
- * 每个字符间隙至多一位 0~9 数字。
+ * 语法：可选起始边界符 '.'，然后小写 ASCII 字母连续排列，每个字符间隙至多一位 0~9
+ * 数字（含首尾间隙），最后可选结束边界符 '.'。
  *
- * 合法示例： "he2l3o"、".hel"、"lo."、".he2l"、"a1"、"5abc"、"abc8"、"." 非法（无字母）
+ * 合法示例： "he2l3o"、".hel"、"lo."、".he2l"、"a1"、"5abc"、"abc8"、"a0"、".0abc"
+ * 非法示例： "."（无字母）、"a00b"/"a01b"（同一间隙两位数字）、"a1.b"、"a.1"
  */
 export function parsePattern(text: string): Pattern {
   const source = text;
-  const stripped = text.replace(/[0-9]/g, '');
 
-  // 去掉数字后必须形如：可选 '.' + 一个以上小写字母 + 可选 '.'
-  const structural = /^\.?[a-z]+\.?$/;
-  if (!structural.test(stripped)) {
+  // 第一层只校验字符集与边界符位置：开头至多一个 '.'，随后是字母，
+  // 字母各间隙允许出现数字（同间隙多位由第二层逐间隙扫描精确报错），结尾至多一个 '.'。
+  // 不能先删数字再校验——否则 "a1.b"、"abc.0" 这类点号错位会被掩盖。
+  if (!/^\.?[0-9]*[a-z](?:[0-9]*[a-z])*[0-9]*\.?$/.test(text)) {
     throw new Error(
-      `模式 "${text}" 非法：字母必须是连续的小写 ASCII，且边界符 '.' 只能出现在最前或最后`
+      `模式 "${text}" 非法：字母必须是连续的小写 ASCII，每个间隙至多一位 0~9 数字，且边界符 '.' 只能出现在最前或最后`
     );
   }
+
+  const stripped = text.replace(/[0-9]/g, '');
   const lettersPart = stripped.replace(/^\./, '').replace(/\.$/, '');
   if (lettersPart.length > MAX_WORD_LENGTH + 1) {
     throw new Error(`模式 "${text}" 过长：字母部分不得超过 ${MAX_WORD_LENGTH + 1} 个`);
   }
 
-  const digits = new Array<number>(stripped.length + 1).fill(0);
+  // null = 该间隙没有写数字；0 = 显式写出的 0（属于有效信息，参与命中与来源解释）
+  const digits: (number | null)[] = new Array<number | null>(stripped.length + 1).fill(null);
   let gapIndex = 0;
   for (const ch of text) {
     if (ch >= '0' && ch <= '9') {
-      if (digits[gapIndex] !== 0) {
+      if (digits[gapIndex] !== null) {
         throw new Error(`模式 "${text}" 非法：同一个字母间隙出现了多个数字`);
       }
       digits[gapIndex] = Number(ch);

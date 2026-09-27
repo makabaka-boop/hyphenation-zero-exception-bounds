@@ -23,13 +23,13 @@ function naiveScore(patterns: Pattern[], padded: string): { score: number; who: 
       if (!ok) continue;
       for (let d = 0; d < p.digits.length; d += 1) {
         const v = p.digits[d];
-        if (v === 0) continue;
+        if (v === null) continue; // 没有写数字的间隙不参与竞争
         const gi = start + d;
         if (v > out[gi].score) {
           out[gi].score = v;
           out[gi].who = [p.source];
         } else if (v === out[gi].score) {
-          out[gi].who.push(p.source);
+          out[gi].who.push(p.source); // 显式 0 与初始 0 相等时也要登记来源
         }
       }
     }
@@ -87,22 +87,44 @@ describe('parsePattern', () => {
   it('解析普通、带边界符与首尾数字的模式', () => {
     expect(parsePattern('he2l3o')).toMatchObject({ symbols: 'helo' });
     // 数字标记它在串中占据的物理间隙：2 在 e|l（槽位 2），3 在 l|o（槽位 3）
-    expect(parsePattern('he2l3o').digits).toEqual([0, 0, 2, 3, 0]);
-    expect(parsePattern('.hel').digits).toEqual([0, 0, 0, 0, 0]); // symbols ".hel" 长度 4（含边界点）→ 5 个间隙
+    expect(parsePattern('he2l3o').digits).toEqual([null, null, 2, 3, null]);
+    expect(parsePattern('.hel').digits).toEqual([null, null, null, null, null]); // symbols ".hel" 长度 4（含边界点）→ 5 个间隙
     expect(parsePattern('lo.').symbols).toBe('lo.');
-    expect(parsePattern('5abc').digits).toEqual([5, 0, 0, 0]); // 前导数字在首间隙
-    expect(parsePattern('abc8').digits).toEqual([0, 0, 0, 8]); // 后导数字在尾间隙
-    expect(parsePattern('.he2l').digits).toEqual([0, 0, 0, 2, 0]); // 2 在 e|l（含点后槽位 3）
+    expect(parsePattern('5abc').digits).toEqual([5, null, null, null]); // 前导数字在首间隙
+    expect(parsePattern('abc8').digits).toEqual([null, null, null, 8]); // 后导数字在尾间隙
+    expect(parsePattern('.he2l').digits).toEqual([null, null, null, 2, null]); // 2 在 e|l（含点后槽位 3）
+  });
+
+  it('显式写出的 0 与「没写数字」区分开', () => {
+    expect(parsePattern('a0').digits).toEqual([null, 0]); // 尾间隙显式 0
+    expect(parsePattern('.0abc').digits).toEqual([null, 0, null, null, null]); // 边界点后、a 前显式 0
+    expect(parsePattern('a0b').digits).toEqual([null, 0, null]);
   });
 
   it('拒绝非法模式', () => {
-    for (const bad of ['.', '..', 'a.b', '.a.b', 'A1b', 'ab$', '12ab', 'a12b', '1.', '.1', '--', 'a1b2c3 ']) {
+    for (const bad of [
+      '.', '..', 'a.b', '.a.b', 'A1b', 'ab$', '12ab', 'a12b', '1.', '.1', '--',
+      'a1b2c3 ',
+      // 点号错位：去掉数字后曾被旧解析器漏过
+      'a1.b', 'abc.0', 'a.1', '4.8b',
+      // 同一间隙两位数字，含 0（旧解析器把 0 当空位，错误放行）
+      'a00b', 'a01b', 'a10b', '00ab', 'ab00'
+    ]) {
       expect(() => parsePattern(bad), `bad pattern: ${bad}`).toThrow();
     }
   });
 
-  it('同一个间隙两位数字必须报错', () => {
+  it('同间隙数字与边界点顺序合法的模式应被接受', () => {
+    // 数字位于点号内侧的间隙：前导点后可跟数字，结尾数字后可跟点
+    expect(() => parsePattern('.0abc')).not.toThrow();
+    expect(() => parsePattern('abc0.')).not.toThrow();
+    expect(() => parsePattern('.5ab3c.')).not.toThrow();
+  });
+
+  it('同一个间隙两位数字必须报错（含重复 0）', () => {
     expect(() => parsePattern('a12b')).toThrow(/多个数字/);
+    expect(() => parsePattern('a00b')).toThrow(/多个数字/);
+    expect(() => parsePattern('a01b')).toThrow(/多个数字/);
   });
 });
 
@@ -229,12 +251,72 @@ describe('trie 与朴素逐模式扫描对拍', () => {
     expect(results[0].breaks).toEqual([]);
     expect(results[0].gaps[2].allowed).toBe(false);
   });
+
+  it('显式 0 数字：分值仍为 0，但来源必须可见、解释必须提到它', () => {
+    const { results, oracleByWord } = analyzeWithOracle(['abc'], {
+      patternText: 'a0b\na0bc'
+    });
+    expectScoresMatchOracle(results, oracleByWord);
+    const r = results[0];
+    // a0b 与 a0bc 都在 a|b（padded gap2，断点 1）显式写 0
+    const g = r.gaps[2];
+    expect(g.score).toBe(0);
+    expect(g.contributors).toEqual(['a0b', 'a0bc']);
+    expect(g.allowed).toBe(false);
+    expect(g.reason).toMatch(/显式写 0|无意见/);
+  });
+
+  it('显式 0 与正分竞争：正分胜出后 0 不再是贡献来源', () => {
+    const { results, oracleByWord } = analyzeWithOracle(['abc'], {
+      patternText: 'a0b\na3b'
+    });
+    expectScoresMatchOracle(results, oracleByWord);
+    const g = results[0].gaps[2];
+    expect(g.score).toBe(3);
+    expect(g.contributors).toEqual(['a3b']);
+  });
+
+  it('词首/词尾词端间隙上的显式 0 也要给出可解释来源', () => {
+    // "0abc"：0 在边界符 '.' 与首字母 a 之间 = padded gap1（断点 0，词首词端，不可断）
+    const { results } = analyzeWithOracle(['abc'], {
+      patternText: '0abc'
+    });
+    const head = results[0].gaps[1];
+    expect(head.breakPosition).toBe(0);
+    expect(head.score).toBe(0);
+    expect(head.contributors).toEqual(['0abc']);
+    expect(head.allowed).toBe(false);
+    expect(head.reason).toMatch(/词首\/词尾/);
+    // 边界外侧间隙（gap0）不可能被任何合法模式命中
+    expect(results[0].gaps[0].contributors).toEqual([]);
+  });
 });
 
 describe('例外词覆盖', () => {
   const patternText = '.he5l\nhel3l\nll4o'; // 模式会允许/禁止一些间隙
 
-  it('显式断点覆盖偶数分值与左右限制', () => {
+  it('显式断点覆盖偶数分值与奇偶结果，但仍受左右最少保留字母数限制', () => {
+    const { results } = analyzeWithOracle(['hello'], {
+      patternText,
+      exceptionText: 'h-ell-o', // 断点 1（左仅 1，违反 leftMin=2）与断点 4（右仅 1，违反 rightMin=2）
+      leftMin: 2,
+      rightMin: 2
+    });
+    const r = results[0];
+    // 两个越界断点都不得进入最终 breaks：导入/解释/预览/导出同源，无一放行
+    expect(r.breaks).toEqual([]);
+    expect(r.hyphenated).toBe('hello');
+    const byBp = new Map(r.gaps.filter((g) => g.breakPosition !== null).map((g) => [g.breakPosition, g]));
+    expect(byBp.get(1)!.fromException).toBe(true);
+    expect(byBp.get(1)!.allowed).toBe(false);
+    expect(byBp.get(1)!.reason).toMatch(/左最少|左 ≥|不满足/);
+    expect(byBp.get(4)!.fromException).toBe(true);
+    expect(byBp.get(4)!.allowed).toBe(false);
+    expect(byBp.get(4)!.reason).toMatch(/右最少|右 ≥|不满足/);
+  });
+
+  it('满足左右限制的显式断点才覆盖模式结果', () => {
+    // 'he-ll-o'：断点 2 左右均 ≥2 放行；断点 4 右侧只剩 1 个字母，违反 rightMin=2 被压下
     const { results } = analyzeWithOracle(['hello'], {
       patternText,
       exceptionText: 'he-ll-o',
@@ -242,14 +324,36 @@ describe('例外词覆盖', () => {
       rightMin: 2
     });
     const r = results[0];
-    expect(r.breaks).toEqual([2, 4]);
+    expect(r.breaks).toEqual([2]);
     const byBp = new Map(r.gaps.filter((g) => g.breakPosition !== null).map((g) => [g.breakPosition, g]));
     expect(byBp.get(2)!.fromException).toBe(true);
     expect(byBp.get(2)!.allowed).toBe(true);
     expect(byBp.get(4)!.fromException).toBe(true);
+    expect(byBp.get(4)!.allowed).toBe(false);
+    expect(byBp.get(4)!.reason).toMatch(/右最少|右 ≥|不满足/);
     // 模式下 gap4（断点 3）是奇数 5 且左右满足，本应可断；例外没有标注 → 被压制
     expect(byBp.get(3)!.allowed).toBe(false);
     expect(byBp.get(3)!.reason).toMatch(/未在此标注断点/);
+  });
+
+  it('leftMin/rightMin 放宽到 0 时，近首尾例外断点才放行', () => {
+    const { results } = analyzeWithOracle(['abcdef'], {
+      patternText: '',
+      exceptionText: 'a-bcde-f', // 断点 1、5
+      leftMin: 1,
+      rightMin: 1
+    });
+    expect(results[0].breaks).toEqual([1, 5]);
+    expect(results[0].hyphenated).toBe('a-bcde-f');
+
+    // 同一词典把限制调回 2：结果必须立即不再放行越界断点（判定不固化在导入阶段）
+    const { results: blocked } = analyzeWithOracle(['abcdef'], {
+      patternText: '',
+      exceptionText: 'a-bcde-f',
+      leftMin: 2,
+      rightMin: 2
+    });
+    expect(blocked[0].breaks).toEqual([]);
   });
 
   it('无断点例外压制全部模式断点', () => {
@@ -332,6 +436,29 @@ describe('导出 JSON 与高亮同源', () => {
     }
     expect(payload.words[0].exception).toBe('he-ll-o');
   });
+
+  it('越过左右最少保留的例外断点：解释、breaks、导出、hyphenated 全部一致不放行', () => {
+    const { dict, results } = analyzeWithOracle(['abcdef'], {
+      patternText: '',
+      exceptionText: 'a-bcde-f', // 断点 1、5 都越过 leftMin=rightMin=2
+      leftMin: 2,
+      rightMin: 2
+    });
+    const r = results[0];
+    expect(r.breaks).toEqual([]);
+    expect(r.hyphenated).toBe('abcdef');
+    for (const bp of [1, 5]) {
+      const g = r.gaps.find((x) => x.breakPosition === bp)!;
+      expect(g.fromException).toBe(true);
+      expect(g.allowed).toBe(false);
+    }
+    const payload = buildExport(results, dict);
+    const w = payload.words[0];
+    expect(w.breaks).toEqual([]);
+    expect(w.hyphenated).toBe('abcdef');
+    expect(w.gaps.filter((g) => g.allowed)).toHaveLength(0);
+    expect(w.gaps.filter((g) => g.fromException).map((g) => g.breakPosition)).toEqual([1, 5]);
+  });
 });
 
 // ---------- 随机对拍 ----------
@@ -351,15 +478,18 @@ describe('随机对拍（trie vs 朴素扫描）', () => {
     const len = 1 + Math.floor(rand() * 4);
     let s = '';
     for (let i = 0; i < len; i += 1) s += letters[Math.floor(rand() * letters.length)];
-    if (rand() < 0.4) s = `.${s}`;
-    if (rand() < 0.4) s = `${s}.`;
-    // 在间隙中随机插入至多一位数字
-    let out = '';
+    // 在字母之间（含首字母前、末字母后）插入至多一位数字——逐间隙生成，天然不会出现同间隙两位
+    let inner = '';
     for (let i = 0; i < s.length; i += 1) {
-      if (rand() < 0.4) out += Math.floor(rand() * 10);
-      out += s[i];
+      if (rand() < 0.4) inner += Math.floor(rand() * 10);
+      inner += s[i];
     }
-    if (rand() < 0.3) out += Math.floor(rand() * 10);
+    if (rand() < 0.3) inner += Math.floor(rand() * 10);
+    // 边界点只能在绝对边缘：前导点在所有数字之前，结尾点在所有数字之后
+    let out = '';
+    if (rand() < 0.4) out += '.';
+    out += inner;
+    if (rand() < 0.4) out += '.';
     return out;
   }
 

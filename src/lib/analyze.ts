@@ -32,6 +32,12 @@ function describeGap(
   dict: Dictionary
 ): { allowed: boolean; reason: string } {
   if (score === 0) {
+    if (contributors.length > 0) {
+      return {
+        allowed: false,
+        reason: `分值 0（来源 ${contributors.join('、')} 显式写 0，表示无意见）：不断开`
+      };
+    }
     return { allowed: false, reason: '无命中模式：间隙分值 0，不可断' };
   }
   if (score % 2 === 0) {
@@ -79,10 +85,14 @@ export function analyzeWord(word: string, dict: Dictionary, trie: PatternTrie): 
 
     if (gi === 0 || gi === padded.length) {
       // 加边界符词的外侧间隙：永远不允许断
-      reason =
-        raw.score === 0
-          ? '边界外侧间隙：无命中，不可断'
-          : `边界外侧间隙：虽有模式 ${raw.contributors.join('、')} 给出分值 ${raw.score}，但词首/词尾外侧不可断`;
+      if (raw.score === 0) {
+        reason =
+          raw.contributors.length > 0
+            ? `边界外侧间隙：模式 ${raw.contributors.join('、')} 显式给出分值 0（无意见），且词首/词尾外侧不可断`
+            : '边界外侧间隙：无命中，不可断';
+      } else {
+        reason = `边界外侧间隙：虽有模式 ${raw.contributors.join('、')} 给出分值 ${raw.score}，但词首/词尾外侧不可断`;
+      }
     } else if (gi === 1 || gi === padded.length - 1) {
       // 紧贴边界符的间隙 = 词的最首/最尾间隙
       breakPosition = gi - 1; // 0 或 L
@@ -90,7 +100,10 @@ export function analyzeWord(word: string, dict: Dictionary, trie: PatternTrie): 
         // 例外的显式断点只可能在 1..L-1，因此这里不会命中
         reason = `例外词 "${exception.source}"：该间隙不在其显式断点中，不可断`;
       } else if (raw.score === 0) {
-        reason = '词首/词尾间隙：分值 0，不可断';
+        reason =
+          raw.contributors.length > 0
+            ? `词首/词尾间隙：模式 ${raw.contributors.join('、')} 显式给出分值 0（无意见），不可断`
+            : '词首/词尾间隙：分值 0，不可断';
       } else {
         reason = `词首/词尾间隙：模式 ${raw.contributors.join('、')} 给出分值 ${raw.score}，但不能在第 0 / 第 ${L} 个字符处断开（无字母可保留）`;
       }
@@ -102,15 +115,30 @@ export function analyzeWord(word: string, dict: Dictionary, trie: PatternTrie): 
       const rightChars = L - bp;
 
       if (exception) {
-        allowed = exceptionBreaks.has(bp);
-        fromException = allowed;
-        if (allowed) {
-          reason = `例外词 "${exception.source}" 的显式断点，覆盖模式结果（模式分值为 ${raw.score}），可断`;
+        const marked = exceptionBreaks.has(bp);
+        fromException = marked;
+        if (marked) {
+          // 例外断点覆盖模式的分值与奇偶结果，但仍须满足左/右最少保留字母数：
+          // 导入、逐间隙解释、页面预览与导出共用这一判定，任何环节都不放行越界断点。
+          if (leftChars < dict.leftMin || rightChars < dict.rightMin) {
+            allowed = false;
+            reason =
+              `例外词 "${exception.source}" 在此显式标注了断点（覆盖模式分值 ${raw.score} 与奇偶结果），` +
+              `但左侧仅 ${leftChars} 个字母、右侧仅 ${rightChars} 个字母，` +
+              `不满足左 ≥ ${dict.leftMin}、右 ≥ ${dict.rightMin} 的最少保留要求，不可断`;
+          } else {
+            allowed = true;
+            reason =
+              `例外词 "${exception.source}" 的显式断点，覆盖模式分值与奇偶结果` +
+              `（模式分值为 ${raw.score}），且满足左 ≥ ${dict.leftMin}、右 ≥ ${dict.rightMin}，可断`;
+          }
         } else {
           const patternWouldAllow = raw.score % 2 === 1 && leftChars >= dict.leftMin && rightChars >= dict.rightMin;
           const patternVerdict =
             raw.score === 0
-              ? '模式分值为 0，本来也不可断'
+              ? raw.contributors.length > 0
+                ? `模式 ${raw.contributors.join('、')} 显式给出分值 0（无意见），本来也不可断`
+                : '无命中模式，分值 0，本来也不可断'
               : patternWouldAllow
                 ? `模式分值为奇数 ${raw.score} 本可断，但被例外压制`
                 : `模式分值为 ${raw.score}（偶数或受左右限制，本来就不可断），例外同样未标注`;
