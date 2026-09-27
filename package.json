@@ -1,0 +1,19 @@
+{
+  "name": "hyphen-dict",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "离线断字词典调试器（Knuth-Liang 模式 trie + 例外词覆盖）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 8080",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.0.0"
+  }
+}

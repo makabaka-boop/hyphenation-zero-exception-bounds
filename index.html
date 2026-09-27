@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>断字词典调试器 · Hyphen Dictionary</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>断字词典调试器</h1>
+      <p class="subtitle">
+        离线页面 · 模式 trie 逐间隙取最大权重 · 奇数可断、偶数禁止 · 例外词显式断点覆盖模式结果
+      </p>
+    </header>
+
+    <main class="layout">
+      <section class="panel editor-panel">
+        <h2>词典</h2>
+
+        <div class="mins">
+          <label>
+            左最少保留字母
+            <input id="leftMin" type="number" min="0" max="40" value="2" />
+          </label>
+          <label>
+            右最少保留字母
+            <input id="rightMin" type="number" min="0" max="40" value="2" />
+          </label>
+        </div>
+
+        <label class="field-label" for="patterns">
+          断字模式（每行一条，1～1000 条）
+          <span class="hint">小写字母两端可带 <code>.</code> 边界符，每个间隙至多一位 0~9</span>
+        </label>
+        <textarea id="patterns" spellcheck="false" rows="10"></textarea>
+
+        <label class="field-label" for="exceptions">
+          例外词表（每行一个，用 <code>-</code> 标注断点）
+          <span class="hint">显式断点无视分值与左右限制，直接覆盖模式结果</span>
+        </label>
+        <textarea id="exceptions" spellcheck="false" rows="5"></textarea>
+
+        <div class="dict-meta" id="dictMeta"></div>
+
+        <label class="field-label" for="words">
+          待分析词（每行一个，最多 2000 个，词长 ≤ 40，小写 ASCII）
+        </label>
+        <textarea id="words" spellcheck="false" rows="6"></textarea>
+
+        <div class="actions">
+          <button id="recompute" type="button">重新计算</button>
+          <button id="export" type="button">导出 JSON</button>
+          <button id="loadDemo" type="button" class="ghost">载入示例</button>
+        </div>
+
+        <div id="error" class="error" hidden></div>
+      </section>
+
+      <section class="panel result-panel">
+        <h2>逐间隙分析</h2>
+        <div class="legend">
+          <span><i class="dot allowed"></i>可断</span>
+          <span><i class="dot denied"></i>被规则排除</span>
+          <span><i class="dot exception"></i>例外覆盖</span>
+          <span><i class="dot boundary"></i>边界外侧</span>
+        </div>
+        <div id="results" class="results"></div>
+
+        <h2>导出预览（与上方高亮同源）</h2>
+        <pre id="exportPreview" class="export-preview" aria-label="导出 JSON 预览"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

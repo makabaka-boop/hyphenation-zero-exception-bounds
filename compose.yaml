@@ -1,0 +1,17 @@
+# 离线断字词典页面 —— 由 Compose 的 hyphen 服务提供
+# 多阶段构建：node 里生成纯静态产物，最终镜像只有一个 nginx
+services:
+  hyphen:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hyphen-dict:latest
+    container_name: hyphen-dict
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
